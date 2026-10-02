@@ -1,6 +1,8 @@
 @tool
 extends "res://addons/godot_mcp/commands/base_commands.gd"
 
+const SceneSafety = preload("res://addons/godot_mcp/utils/scene_safety.gd")
+
 
 func get_commands() -> Dictionary:
 	return {
@@ -60,7 +62,9 @@ func _save_scene(_params: Dictionary) -> Dictionary:
 	var path := root.scene_file_path
 	if path.is_empty():
 		return _err("Scene has no file path — save manually first or use create_scene")
-	editor_plugin.get_editor_interface().save_scene()
+	var error := editor_plugin.get_editor_interface().save_scene()
+	if error != OK:
+		return _err("Failed to save scene: error %d" % error)
 	return _ok({"scene_path": path, "saved": true})
 
 
@@ -71,17 +75,24 @@ func _create_scene(params: Dictionary) -> Dictionary:
 		return _err("Missing 'scene_path'")
 	if not scene_path.begins_with("res://"):
 		scene_path = "res://" + scene_path.trim_prefix("/")
+	scene_path = scene_path.simplify_path()
+	if not scene_path.begins_with("res://") or scene_path.get_extension() != "tscn":
+		return _err("Expected a project .tscn path")
+	if _is_open_scene(scene_path):
+		return _err("Cannot overwrite an open scene; edit its live tree or close it first")
 	if FileAccess.file_exists(scene_path) and not params.get("overwrite", false):
 		return _err("Scene already exists: %s" % scene_path, -32002, {"suggestion": "Set overwrite=true to replace"})
 
-	if not ClassDB.class_exists(root_type):
-		return _err("Unknown node type: %s" % root_type)
+	var type_error := SceneSafety.node_type_error(root_type)
+	if not type_error.is_empty():
+		return _err(type_error)
 
 	var root: Node = ClassDB.instantiate(root_type)
 	root.name = scene_path.get_file().get_basename()
 	var packed := PackedScene.new()
-	packed.pack(root)
-	var err := ResourceSaver.save(packed, scene_path)
+	var err := packed.pack(root)
+	if err == OK:
+		err = ResourceSaver.save(packed, scene_path)
 	root.free()
 	if err != OK:
 		return _err("Failed to create scene: error %d" % err)
@@ -117,6 +128,8 @@ func _delete_scene(params: Dictionary) -> Dictionary:
 		return _err("Missing scene_path")
 	if not FileAccess.file_exists(scene_path):
 		return _err("Scene not found: %s" % scene_path)
+	if _is_open_scene(scene_path):
+		return _err("Cannot delete an open scene; close it first")
 	var err := DirAccess.remove_absolute(ProjectSettings.globalize_path(scene_path))
 	if err != OK:
 		return _err("Failed to delete scene")
@@ -130,22 +143,35 @@ func _add_scene_instance(params: Dictionary) -> Dictionary:
 	var instance_name: String = params.get("name", "")
 	if scene_path.is_empty():
 		return _err("Missing scene_path")
-	var packed: PackedScene = load(scene_path)
+	var packed := load(scene_path) as PackedScene
 	if packed == null:
 		return _err("Failed to load scene: %s" % scene_path)
 	var parent := _resolve_node(parent_path)
 	if parent == null:
 		return _err("Parent not found")
+	var root := _edited_root()
+	if root == null or (parent != root and not root.is_ancestor_of(parent)):
+		return _err("Parent must belong to the edited scene")
 	var inst := packed.instantiate()
+	if inst == null:
+		return _err("Could not instantiate scene: %s" % scene_path)
 	if not instance_name.is_empty():
 		inst.name = instance_name
-	var root := _edited_root()
-	editor_plugin.get_undo_redo().create_action("MCP Instance Scene")
+	editor_plugin.get_undo_redo().create_action("MCP Instance Scene", UndoRedo.MERGE_DISABLE, root)
 	editor_plugin.get_undo_redo().add_do_method(parent, "add_child", inst, true)
 	editor_plugin.get_undo_redo().add_do_method(inst, "set_owner", root)
+	editor_plugin.get_undo_redo().add_do_reference(inst)
 	editor_plugin.get_undo_redo().add_undo_method(parent, "remove_child", inst)
 	editor_plugin.get_undo_redo().commit_action()
 	return _ok({"path": str(inst.get_path()), "scene": scene_path})
+
+
+func _is_open_scene(path: String) -> bool:
+	var normalized := path.simplify_path().to_lower()
+	for open_path in editor_plugin.get_editor_interface().get_open_scenes():
+		if str(open_path).simplify_path().to_lower() == normalized:
+			return true
+	return false
 
 
 func _get_scene_exports(p: Dictionary) -> Dictionary:

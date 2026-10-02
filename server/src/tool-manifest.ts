@@ -14,6 +14,16 @@ export interface ToolDef {
 }
 
 export const TOOL_DEFINITIONS: ToolDef[] = [
+  // Human/editor collaboration: bounded observations, retained baselines and undo.
+  { name: "get_editor_activity", description: "Read cursor-based editor activity; reports gaps and observation context, not guaranteed human identity", method: "get_editor_activity", params: [{ name: "cursor", type: "number" }, { name: "limit", type: "number" }] },
+  { name: "get_editor_selection", description: "Selected scene nodes and current undo history/version", method: "get_editor_selection" },
+  { name: "set_editor_selection", description: "Select scene-relative node paths after validating all targets", method: "set_editor_selection", params: [{ name: "node_paths", type: "array", required: true }, { name: "clear", type: "boolean" }] },
+  { name: "scene_snapshot", description: "Capture bounded live editor scene properties as a retained comparison baseline; eight baselines per session", method: "scene_snapshot", params: [{ name: "root_path", type: "string" }, { name: "max_depth", type: "number" }, { name: "max_nodes", type: "number" }] },
+  { name: "scene_diff", description: "Compare live scene to a scene_snapshot without advancing the baseline; reports truncation and uncertain paths", method: "scene_diff", params: [{ name: "snapshot_id", type: "string", required: true }] },
+  { name: "undo_last", description: "Undo current scene's most recent action, including human edits; optionally require the observed history version", method: "undo_last", params: [{ name: "expected_version", type: "number" }] },
+  { name: "redo_last", description: "Redo current scene action with optional history version guard", method: "redo_last", params: [{ name: "expected_version", type: "number" }] },
+  { name: "get_scene_spatial_info", description: "Bounded 3D transforms, visibility and authored world AABBs in the edited scene; optional MultiMesh expansion with a whole-request instance cap", method: "get_scene_spatial_info", params: [{ name: "node_path", type: "string" }, { name: "max_depth", type: "number" }, { name: "max_nodes", type: "number" }, { name: "include_multimesh_instances", type: "boolean" }, { name: "max_instances", type: "number" }] },
+  { name: "get_spatial_relationship", description: "Compare two edited-scene subtree world bounds: center distance, axis gaps and AABB overlap (not physics collision); traversal budgets apply per subtree", method: "get_spatial_relationship", params: [{ name: "first_path", type: "string", required: true }, { name: "second_path", type: "string", required: true }, { name: "max_depth", type: "number" }, { name: "max_nodes", type: "number" }] },
   // Project (7)
   { name: "get_project_info", description: "Project metadata, version, viewport, autoloads", method: "get_project_info" },
   { name: "get_filesystem_tree", description: "Recursive file tree with filtering", method: "get_filesystem_tree", params: [{ name: "directory", type: "string" }, { name: "max_depth", type: "number" }] },

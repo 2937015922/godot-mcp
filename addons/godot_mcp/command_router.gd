@@ -5,6 +5,8 @@ var editor_plugin: EditorPlugin
 var _handlers: Dictionary = {}
 
 const COMMAND_MODULES := [
+	"res://addons/godot_mcp/commands/collaboration_commands.gd",
+	"res://addons/godot_mcp/commands/spatial_commands.gd",
 	"res://addons/godot_mcp/commands/project_commands.gd",
 	"res://addons/godot_mcp/commands/scene_commands.gd",
 	"res://addons/godot_mcp/commands/node_commands.gd",
@@ -51,7 +53,18 @@ func execute(method: String, params: Dictionary) -> Dictionary:
 				"message": "Method not found: %s" % method,
 			},
 		}
-	return await _handlers[method].call(params)
+	var activity: Node = editor_plugin.get("editor_activity")
+	if activity and params.has("expected_scene_snapshot"):
+		var validation: Dictionary = activity.validate_snapshot(str(params["expected_scene_snapshot"]))
+		if validation.has("error"):
+			return {"error": {"code": -32020, "message": str(validation["error"])}}
+	var activity_token: int = -1
+	if activity:
+		activity_token = activity.begin_mcp(method)
+	var response: Dictionary = await _handlers[method].call(params)
+	if is_instance_valid(activity):
+		activity.end_mcp(activity_token)
+	return response
 
 func get_available_methods() -> Array:
 	return _handlers.keys()

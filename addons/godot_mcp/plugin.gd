@@ -11,10 +11,15 @@ var _websocket_client: Node
 var _command_router: Node
 var _injected: Array[String] = []
 var auto_dismiss_dialogs: bool = false
+var editor_activity: Node
 
 
 func _enter_tree() -> void:
 	_inject_autoloads()
+	editor_activity = preload("res://addons/godot_mcp/services/editor_activity.gd").new()
+	editor_activity.name = "MCPEditorActivity"
+	add_child(editor_activity)
+	editor_activity.setup(self)
 	_command_router = preload("res://addons/godot_mcp/command_router.gd").new()
 	_command_router.name = "MCPCommandRouter"
 	_command_router.editor_plugin = self
@@ -29,6 +34,9 @@ func _enter_tree() -> void:
 
 
 func _exit_tree() -> void:
+	if editor_activity:
+		editor_activity.shutdown()
+		editor_activity.queue_free()
 	_remove_autoloads()
 	if _websocket_client:
 		_websocket_client.stop()

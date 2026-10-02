@@ -7,3 +7,9 @@ dist/
 .specstory/
 example/
 README_bak.md
+.godot/
+*.gd.uid
+tests/fixture/addons/
+tests/fixture/generated/
+tests/results/
+.local/

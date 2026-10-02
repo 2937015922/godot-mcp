@@ -1,0 +1,33 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://fixture_actions.gd" id="Actions"]
+
+[sub_resource type="BoxMesh" id="Box"]
+size = Vector3(2, 2, 2)
+
+[sub_resource type="BoxShape3D" id="Shape"]
+size = Vector3(2, 2, 2)
+
+[node name="CollaborationFixture" type="Node3D"]
+script = ExtResource("Actions")
+
+[node name="BoxA" type="MeshInstance3D" parent="."]
+mesh = SubResource("Box")
+
+[node name="Body" type="StaticBody3D" parent="BoxA"]
+
+[node name="Collision" type="CollisionShape3D" parent="BoxA/Body"]
+shape = SubResource("Shape")
+
+[node name="BoxB" type="MeshInstance3D" parent="."]
+position = Vector3(5, 0, 0)
+mesh = SubResource("Box")
+
+[node name="Pivot" type="Node3D" parent="."]
+position = Vector3(10, 0, 0)
+
+[node name="Camera3D" type="Camera3D" parent="."]
+position = Vector3(2, 2, 10)
+
+[node name="Light" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-45, 25, 0)

@@ -1,6 +1,6 @@
 {
   "name": "godot-mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server bridging AI assistants to the Godot editor",
   "type": "module",
   "bin": {
@@ -9,7 +9,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:editor": "node tests/editor-integration.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

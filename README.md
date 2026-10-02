@@ -1,8 +1,10 @@
-# Godot MCP
+# Godot MCP — collaboration fork 0.2.0
 
 **Language:** **English** | [简体中文](README.zh.md)
 
 Open-source Godot MCP server that lets AI assistants (Claude Code, Cursor, Codex, and more) control the Godot 4 editor directly through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/).
+
+This [fork](https://github.com/2937015922/godot-mcp) extends [mkdevkit/godot-mcp](https://github.com/mkdevkit/godot-mcp) with editor activity, scene snapshots and diffs, guarded edits, and 3D spatial inspection. It preserves the original 173 tools and adds 10 tools for **183 total**. The focus is sharing an editable Godot scene between a person and an AI assistant.
 
 ```
 AI client  ←—stdio/MCP—→  Node.js server  ←—WebSocket:6505—→  Godot editor plugin
@@ -14,12 +16,17 @@ AI client  ←—stdio/MCP—→  Node.js server  ←—WebSocket:6505—→  Go
 |-----------|------|
 | **Godot plugin** | WebSocket client that receives JSON-RPC requests and executes commands via editor APIs |
 | **Node.js MCP server** | Speaks stdio to AI clients; runs a WebSocket server (default port 6505) to forward tool calls |
-| **Command router** | `command_router.gd` aggregates 24 command modules with **173** handlers |
+| **Command router** | `command_router.gd` aggregates 26 command modules with **182** handlers; the server also supplies `get_bridge_status` |
+| **Editor collaboration** | A session-local activity journal, eight retained scene baselines, selection, undo/redo, and optional snapshot checks before edits |
 | **Runtime services** | 3 autoloads (`MCPRuntimeBridge` / `MCPInputBridge` / `MCPScreenshotBridge`) use `user://` IPC for in-game inspection, input simulation, and screenshots |
 
 ### Core features
 
-- **UndoRedo integration** — node add/remove/edit and property changes go through the editor undo stack
+- **Live scene editing** — node operations work on the currently edited tree, including unsaved changes; supported node and batch operations use the editor undo stack
+- **Scene handoff** — inspect selection and recent activity, compare a saved baseline, and reject supported edits when the inspected scene has changed
+- **3D inspection** — world transforms, authored bounds, and spatial relationships, with explicit traversal limits and unavailable data
+- **Native screenshots** — editor and game screenshots return PNG image content to MCP clients, with separate size/path metadata
+- **Project handshake** — the server verifies the connected plugin's project identity; `GODOT_MCP_PROJECT` can pin it to one project
 - **Smart type parsing** — strings like `Vector2(100, 200)`, `#ff0000`, `Color(1,0,0)` are converted automatically
 - **Reconnect with backoff** — exponential backoff on the plugin side (1s → 60s)
 - **Heartbeat** — bidirectional ping/pong to keep the WebSocket alive
@@ -27,17 +34,20 @@ AI client  ←—stdio/MCP—→  Node.js server  ←—WebSocket:6505—→  Go
 
 ## Tool categories
 
-**173 MCP tools** across **26 categories**:
+**183 MCP tools** across **27 categories**:
 
 | Category | Tools | Highlights |
 |----------|-------|------------|
+| Collaboration | 7 | Editor activity/selection, scene snapshots/diffs, undo/redo |
+| Spatial inspection | 2 | Authored world bounds, transforms, distances and AABB overlap |
+| Bridge | 1 | Connection status and editor project identity |
 | Project | 7 | Project info, file search, UID conversion, project settings |
 | Scene | 10 | Scene tree, create/delete/instance scenes, play/stop, `@export` variables |
 | Node | 14 | CRUD, properties, signals, groups, resource attachment |
 | Script | 8 | Script CRUD, attach, validation, full-text search |
 | Editor | 13 | Editor/game screenshots, camera control, error log, screenshot diff, auto-dismiss dialogs |
 | Input | 7 | Keyboard/mouse/action simulation, input map (incl. deadzone) |
-| Runtime | 20 | In-game scene tree, properties, signal watching, record/replay, UI clicks, navigation |
+| Runtime | 19 | In-game scene tree, properties, signal watching, record/replay, UI clicks, navigation |
 | Animation | 6 | Tracks, keyframes, AnimationPlayer CRUD |
 | TileMap | 6 | Cell read/write, rect fill, used-cell queries |
 | Theme/UI | 7 | Theme creation, Control layout, color/font/StyleBox overrides |
@@ -57,7 +67,13 @@ AI client  ←—stdio/MCP—→  Node.js server  ←—WebSocket:6505—→  Go
 | Android | 4 | adb device list, APK export/deploy, preset details |
 
 <details>
-<summary>Expand to see all 173 tool names</summary>
+<summary>Expand to see all 183 tool names</summary>
+
+**Collaboration:** `get_editor_activity` · `get_editor_selection` · `set_editor_selection` · `scene_snapshot` · `scene_diff` · `undo_last` · `redo_last`
+
+**Spatial inspection:** `get_scene_spatial_info` · `get_spatial_relationship`
+
+**Bridge:** `get_bridge_status`
 
 **Project:** `get_project_info` · `get_filesystem_tree` · `search_files` · `get_project_settings` · `set_project_setting` · `uid_to_project_path` · `project_path_to_uid`
 
@@ -109,6 +125,29 @@ AI client  ←—stdio/MCP—→  Node.js server  ←—WebSocket:6505—→  Go
 
 </details>
 
+## Working together in the editor
+
+1. Call `get_bridge_status` to check the project, then `get_editor_selection` and `get_editor_activity` to see the editing context.
+2. Capture a `scene_snapshot` of the scene or a focused subtree. Keep its `snapshot_id` while a person adjusts the scene in Godot.
+3. Call `scene_diff` with that ID to inspect changes. Reading a diff does not replace the baseline. Node paths identify entries, so moves and renames appear as removals and additions.
+4. Take a fresh whole-scene snapshot (`root_path: "."`) before an AI edit and pass its ID as `expected_scene_snapshot` on a supported operation. Save deliberately with `save_scene`; the normal node tools modify the live tree without automatically saving it.
+
+The optional guard is available on `add_node`, `delete_node`, `duplicate_node`, `move_node`, `rename_node`, `update_property`, `add_resource`, `connect_signal`, `disconnect_signal`, `set_node_groups`, `batch_add_nodes`, `batch_set_property`, `add_scene_instance`, and `save_scene`. It requires a complete **whole-scene snapshot**. Changed captured content, a changed editor history version, or an expired, reloaded, incomplete, or subtree baseline rejects the edit. Subtree snapshots are only for scoped comparison with `scene_diff`. This is a check before the operation, not a lock on the editor or protection for every tool. Create a new baseline after each change.
+
+The activity journal holds the latest **512 events** and reports cursor gaps. `source: editor` means an observation outside an MCP command; `mcp_window` means an observation while a command was active and can include simultaneous human edits. Only explicit command events use `mcp`. These labels do not prove who made a scene change. The journal and its **eight snapshots** are local to the editor session and are cleared when the plugin shuts down.
+
+Snapshots have node, depth, property, collection, and byte limits. They capture stored node properties, resource summaries, group names, and persistent signal connections, including targets, methods, flags, and bound arguments. Script source, external file bytes, transient signal connections, and group persistence flags are outside this comparison. A snapshot is not a complete scene backup. Check `truncated`, `property_capture_complete`, and the diff's `complete`/`uncompared_paths` fields; completeness describes this captured scope. Incomplete snapshots cannot authorize guarded edits.
+
+`undo_last` and `redo_last` act on the current scene's latest history action, which may be a human edit; pass the observed `expected_version` to reject a changed history. They preserve Godot's history-manager bookkeeping. Godot 4.7.2 does not expose its scoped manager operations to GDScript, so this version uses a checked adapter to the native History dock. If the required dock layout or callbacks are unavailable, the operation returns an error instead of manipulating the underlying UndoRedo directly. Other Godot versions require compatibility verification; the response's `backend` identifies the route used.
+
+## 3D inspection
+
+`get_scene_spatial_info` reports the edited scene's transforms, visibility flags, authored geometry/collision-shape bounds, and optional MultiMesh instance transforms. `get_spatial_relationship` compares two bounded subtree scans. Check `bounds_complete` and the reported unavailable/truncated fields before drawing conclusions.
+
+Bounds include hidden geometry and disabled collision shapes. AABB overlap does not prove a physics contact, camera visibility, or a playable route. Native graphical Godot can supply individual MultiMesh transforms; Godot's headless renderer supplies dummy MultiMesh transforms, so per-instance inspection explicitly reports unavailable there. These tools inspect the authored editor scene; use the existing runtime tools for a running game.
+
+`get_editor_screenshot` and `get_game_screenshot` return a native MCP `image/png` content block plus text metadata; image bytes are no longer embedded in the JSON text response. They require a graphical editor/game session, and the game screenshot requires a running game. Empty image results report an error. The native integration run retrieves both images, saves them under `tests/results/`, and validates their PNG headers.
+
 ## Project structure
 
 ```
@@ -118,8 +157,10 @@ godot-mcp/
 │   ├── plugin.cfg
 │   ├── websocket_client.gd        # WebSocket client + JSON-RPC dispatch
 │   ├── command_router.gd          # Command router; registers all handlers
-│   ├── commands/                  # 24 command modules (173 tool implementations)
+│   ├── commands/                  # 26 command modules (182 tool implementations)
 │   │   ├── base_commands.gd       # Base class: Undo, runtime IPC, screenshots, etc.
+│   │   ├── collaboration_commands.gd
+│   │   ├── spatial_commands.gd
 │   │   ├── project_commands.gd
 │   │   ├── scene_commands.gd
 │   │   ├── node_commands.gd
@@ -144,22 +185,25 @@ godot-mcp/
 │   │   ├── analysis_commands.gd
 │   │   ├── test_commands.gd
 │   │   └── android_commands.gd
-│   ├── services/                  # Runtime autoload services
+│   ├── services/                  # Editor observations and runtime autoload services
+│   │   ├── editor_activity.gd     # Journal, scene snapshots/diffs, history guards
 │   │   ├── mcp_runtime_bridge.gd  # In-game scene tree / properties / script execution
 │   │   ├── mcp_input_bridge.gd    # Input event queue
 │   │   └── mcp_screenshot_bridge.gd
 │   └── utils/
 │       ├── type_parser.gd         # Vector2 / Color type parsing
 │       ├── node_utils.gd
+│       ├── scene_safety.gd        # Property validation and subtree ownership
 │       └── resource_utils.gd
 ├── server/                        # Node.js MCP server
 │   ├── src/
 │   │   ├── index.ts               # MCP stdio entry
 │   │   ├── godot-bridge.ts        # WebSocket server + JSON-RPC
 │   │   ├── tools.ts               # Tool registration
-│   │   └── tool-manifest.ts       # 173 tool definitions (name / description / params)
+│   │   └── tool-manifest.ts       # 182 definitions; tools.ts adds bridge status
 │   └── build/index.js             # Build output (MCP entry point)
-├── example/                       # Demo Godot project
+├── scripts/install-local.ps1      # Windows local installation helper
+├── tests/                         # Native Godot checks and editor fixture
 ├── .mcp.json.example              # Sample MCP client config
 ├── README.md                      # English docs (default)
 └── README.zh.md                   # Chinese docs
@@ -167,11 +211,21 @@ godot-mcp/
 
 ## Requirements
 
-- **Godot** 4.4+
+- **Godot** 4.7.2 is the current development target; earlier Godot 4 releases need compatibility verification
 - **Node.js** 18+
 - Any MCP-capable client: Claude Code, Cursor, Codex CLI, Cline, Windsurf, etc.
 
 ## Usage
+
+### Windows local installer
+
+From this checkout, use PowerShell with your project directory and chosen port:
+
+```powershell
+.\scripts\install-local.ps1 -ProjectPath "D:\Games\MyGame" -Port 6505
+```
+
+Add `-GodotPath "C:\Tools\Godot\Godot.exe"` when supplying a local engine executable. Add `-ConfigureCodex` to opt into configuring the local Codex MCP entry. The manual steps below describe the same plugin/server components and apply to other clients.
 
 ### 1. Install the Godot plugin
 
@@ -213,7 +267,8 @@ Add the following to your MCP config file (**replace paths with your actual path
       "command": "node",
       "args": ["D:/godot-mcp/server/build/index.js"],
       "env": {
-        "GODOT_MCP_PORT": "6505"
+        "GODOT_MCP_PORT": "6505",
+        "GODOT_MCP_PROJECT": "D:/Games/MyGame"
       }
     }
   }
@@ -221,6 +276,10 @@ Add the following to your MCP config file (**replace paths with your actual path
 ```
 
 See also [`.mcp.json.example`](.mcp.json.example) in the repo.
+
+`GODOT_MCP_PROJECT` is the absolute **project directory**, not the `project.godot` file. Use the matching 0.2.0 plugin and server: the server waits for the plugin handshake before forwarding commands and rejects a different pinned project or a second editor attempting to take over an active connection. Without the project setting, status still shows the connected project's identity but does not pin it.
+
+The plugin and server must use the same port. The plugin reads `GODOT_MCP_PORT` from its launch environment first, then the project's `godot_mcp/network/port` setting, then defaults to 6505. The installer sets the project port; manual installations can set it in Project Settings or launch Godot with the environment variable. Setting an environment variable only in the MCP client does not change an already running editor's environment. Keep separate projects on separate ports.
 
 ### 4. Get started
 
@@ -233,13 +292,34 @@ See also [`.mcp.json.example`](.mcp.json.example) in the repo.
    - "Play the current scene, then capture a game screenshot"
    - "Fill a grass area on the TileMap"
 
-### 5. Example project
+### 5. Tests
 
-The `example/` directory contains a runnable demo project:
+Run these from the repository root in PowerShell:
 
-```bash
-godot --editor example/project.godot
+```powershell
+npm --prefix server test
+$env:GODOT_BIN = "C:\Tools\Godot\Godot.exe"
+node server/tests/editor-integration.mjs
 ```
+
+The integration harness creates an isolated project in `.local/editor-fixture` and uses port 6517 by default (`GODOT_TEST_PORT` overrides it). Its 21 checks exercise the actual MCP/server/editor path, scene differences and guards, ownership, undo/redo, persistence, open-scene protection, and starting/stopping a game. Use a graphical session to also retrieve editor/game screenshots:
+
+```powershell
+$env:GODOT_TEST_NATIVE = "1"
+node server/tests/editor-integration.mjs
+Remove-Item Env:GODOT_TEST_NATIVE
+```
+
+After the integration harness has prepared its fixture, the standalone Godot checks can reuse its installed addon:
+
+```powershell
+$repoPath = (Get-Location).Path
+foreach ($testName in @("test_collaboration", "test_scene_safety", "test_spatial")) {
+    & $env:GODOT_BIN --headless --path "$repoPath/.local/editor-fixture" --script "$repoPath/tests/$testName.gd"
+}
+```
+
+The native development target is Godot 4.7.2. Headless and graphical checks cover different renderer behavior, particularly MultiMesh instances. These tests cover the listed workflows; they are not exhaustive validation of all 183 tools or human playtesting of a game. The integration result and local logs are written to `tests/results/editor-integration.json`.
 
 ## How it works
 
@@ -271,8 +351,13 @@ cd server && npm run build
 
 - **Android tools**: `list_android_devices` runs `adb devices`; `deploy_to_android` uses headless Godot export and adb install (requires an Android export preset and adb on PATH)
 - **Runtime tools**: call `play_scene` first; the game process must load the `MCPRuntimeBridge` autoload; `watch_signals` listens for signal emissions on specified nodes while the game is running
-- **Cross-scene batch edits** (`cross_scene_set_property`): modifies scene instances in memory — save the affected scene files manually
-- Some editor APIs may differ across Godot minor versions; **4.4+** is recommended
+- **Cross-scene batch edits** (`cross_scene_set_property`): prevalidate and save closed `.tscn` files directly in the requested directory. If any target scene is open, the whole request is rejected before writing; use live scene edits or close the scene first. These disk writes have no editor undo. If a later save fails, earlier successful saves remain and are listed in the error's `updated_scenes`.
+- **Scope**: the additional collaboration tools do not convert runtime-generated levels into editable `.tscn` files, merge competing edits automatically, or guarantee undo/guards for every inherited tool. Scene conversion and regeneration policies remain project work.
+- **Compatibility**: editor APIs can differ across Godot minor versions. This fork has no DAP debugger, GDScript LSP integration, or general runtime pause/step feature imported from other bridges.
+
+## Credits
+
+The codebase and original tools come from [mkdevkit/godot-mcp](https://github.com/mkdevkit/godot-mcp), under MIT. Collaboration and spatial-inspection work was informed conceptually by [TomasLucasUTN/godot-mcp-bridge](https://github.com/TomasLucasUTN/godot-mcp-bridge), [satelliteoflove/godot-mcp](https://github.com/satelliteoflove/godot-mcp), and [NPGameDev/godot-mcp-toolkit](https://github.com/NPGameDev/godot-mcp-toolkit). No source code from those three projects was copied into this release; this fork does not incorporate their full feature sets. See [CHANGELOG.md](CHANGELOG.md) for this fork's changes.
 
 ## License
 

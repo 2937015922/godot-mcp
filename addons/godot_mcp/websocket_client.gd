@@ -29,7 +29,11 @@ func get_port() -> int:
 
 func start() -> void:
 	_running = true
-	_port = int(OS.get_environment("GODOT_MCP_PORT") if OS.has_environment("GODOT_MCP_PORT") else DEFAULT_PORT)
+	_port = int(OS.get_environment("GODOT_MCP_PORT") if OS.has_environment("GODOT_MCP_PORT") else ProjectSettings.get_setting("godot_mcp/network/port", DEFAULT_PORT))
+	if _port < 1 or _port > 65535:
+		push_error("[Godot MCP] Port must be between 1 and 65535")
+		_running = false
+		return
 	_try_connect()
 
 
@@ -62,6 +66,12 @@ func _process(delta: float) -> void:
 				_reconnect_delay = RECONNECT_BASE_SEC
 				_ping_timer = 0.0
 				print("[Godot MCP] Connected to MCP server (ws://127.0.0.1:%d)" % _port)
+				_send_json({"jsonrpc": "2.0", "method": "godot_hello", "params": {
+					"project_path": ProjectSettings.globalize_path("res://"),
+					"project_name": ProjectSettings.get_setting("application/config/name", ""),
+					"godot_version": Engine.get_version_info().string,
+					"plugin_version": "0.2.0",
+				}})
 				connected.emit()
 			_ping_timer += delta
 			if _ping_timer >= PING_INTERVAL_SEC:
@@ -132,6 +142,8 @@ func _handle_message(text: String) -> void:
 
 
 func _execute_command(id: Variant, method: String, params: Dictionary) -> void:
+	# Avoid executing editor mutations inside deferred progress-dialog callbacks.
+	await get_tree().process_frame
 	var result: Dictionary = await command_router.execute(method, params)
 	if result.has("error"):
 		_send_response(id, null, result["error"])
