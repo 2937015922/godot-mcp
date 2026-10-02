@@ -85,6 +85,19 @@ try {
   editor.stderr.on('data', b => log.push(b.toString()));
   await until(async () => (await call('get_bridge_status')).connected, 45000);
   await until(async () => (await call('get_scene_tree')).scene_path === 'res://scene.tscn');
+  await check('native viewport camera uses the SubViewport Camera3D API', async () => {
+    const before = await call('get_editor_camera');
+    assert(before.cameras.length > 0);
+    await fails('set_editor_camera', { viewport_index: 4 }, /between 0 and 3/);
+    const result = await call('set_editor_camera', { x: 4, y: 5, z: 12, rotation_x: -0.2 });
+    assert.equal(result.navigation_state_synchronized, false);
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const after = (await call('get_editor_camera')).cameras[0];
+    assert(Math.abs(after.position.x - 4) < 0.001);
+    assert(Math.abs(after.position.y - 5) < 0.001);
+    assert(Math.abs(after.position.z - 12) < 0.001);
+    assert(Math.abs(after.rotation.x + 0.2) < 0.001);
+  });
   await check('MCP handshake identifies the real Godot project', async () => {
     const info = await call('get_project_info');
     assert.match(JSON.stringify(info), /Godot MCP Collaboration Fixture/);

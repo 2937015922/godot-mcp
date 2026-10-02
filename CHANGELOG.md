@@ -18,6 +18,7 @@ First collaboration release of the [2937015922/godot-mcp fork](https://github.co
 
 ### Fixed
 
+- Godot 4.7 viewport camera reads and preview writes now use `SubViewport.get_camera_3d()`, validate viewport indices, and report the private orbit-cursor limitation. Native integration now checks camera position and rotation after idle frames (22 workflow checks total).
 - Node deletion/duplication/reparenting preserve subtree ownership through undo/redo. Structural operations register object references and restore sibling order; reparenting preserves world position and restores original local transforms on undo. Invalid root/cyclic operations and moves across instance ownership boundaries are rejected.
 - Batch node creation and property edits validate before making changes and use one editor undo action. A batch can reference parents created earlier in the same request.
 - Signal connections and groups are persistent and undoable. Resource assignment and anchor presets use undo; anchor restoration includes offsets.

@@ -349,6 +349,7 @@ cd server && npm run build
 
 ## Known limitations
 
+- **Editor camera**: Godot 4.7 returns a `SubViewport`; camera tools use its actual `Camera3D`. `set_editor_camera` changes the live preview transform, but does not synchronize Godot's private orbit-navigation cursor. Subsequent mouse navigation can replace the preview; focus the selected node with F for normal human navigation.
 - **Android tools**: `list_android_devices` runs `adb devices`; `deploy_to_android` uses headless Godot export and adb install (requires an Android export preset and adb on PATH)
 - **Runtime tools**: call `play_scene` first; the game process must load the `MCPRuntimeBridge` autoload; `watch_signals` listens for signal emissions on specified nodes while the game is running
 - **Cross-scene batch edits** (`cross_scene_set_property`): prevalidate and save closed `.tscn` files directly in the requested directory. If any target scene is open, the whole request is rejected before writing; use live scene edits or close the scene first. These disk writes have no editor undo. If a later save fails, earlier successful saves remain and are listed in the error's `updated_scenes`.

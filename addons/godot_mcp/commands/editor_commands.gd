@@ -109,16 +109,17 @@ func _reload_project(_params: Dictionary) -> Dictionary:
 func _get_editor_camera(_params: Dictionary) -> Dictionary:
 	var ei := editor_plugin.get_editor_interface()
 	var cameras: Array = []
-	var count := 1
-	if ei.has_method("get_editor_viewport_3d_count"):
-		count = ei.get_editor_viewport_3d_count()
+	var count := 4
 	for i in count:
 		if not ei.has_method("get_editor_viewport_3d"):
 			break
 		var vp = ei.get_editor_viewport_3d(i)
 		if vp == null:
 			continue
-		var xform: Transform3D = vp.get_camera_transform()
+		var camera: Camera3D = vp.get_camera_3d()
+		if camera == null:
+			continue
+		var xform: Transform3D = camera.global_transform
 		cameras.append({
 			"viewport_index": i,
 			"position": {"x": xform.origin.x, "y": xform.origin.y, "z": xform.origin.z},
@@ -132,9 +133,14 @@ func _set_editor_camera(params: Dictionary) -> Dictionary:
 	if not ei.has_method("get_editor_viewport_3d"):
 		return _err("3D editor viewport not available")
 	var idx: int = int(params.get("viewport_index", 0))
+	if idx < 0 or idx > 3:
+		return _err("viewport_index must be between 0 and 3")
 	var vp = ei.get_editor_viewport_3d(idx)
 	if vp == null:
 		return _err("Viewport not found: %d" % idx)
+	var camera: Camera3D = vp.get_camera_3d()
+	if camera == null:
+		return _err("No 3D camera in viewport: %d" % idx)
 	var pos_dict: Variant = params.get("position", {})
 	var pos := Vector3(
 		float(params.get("x", pos_dict.x if pos_dict is Vector3 else (pos_dict.get("x", 0) if pos_dict is Dictionary else 0))),
@@ -148,8 +154,15 @@ func _set_editor_camera(params: Dictionary) -> Dictionary:
 		float(params.get("rotation_z", rot_dict.z if rot_dict is Vector3 else (rot_dict.get("z", 0) if rot_dict is Dictionary else 0)))
 	)
 	var xform := Transform3D(Basis.from_euler(rot), pos)
-	vp.set_camera_transform(xform)
-	return _ok({"viewport_index": idx, "position": _serialize_value(pos), "rotation": _serialize_value(rot)})
+	# EditorInterface returns SubViewport, not Node3DEditorViewport. The public
+	# Camera3D API controls the live view; Godot's internal orbit cursor is private.
+	# Subsequent human navigation can therefore replace this preview transform.
+	camera.global_transform = xform
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not camera.global_transform.is_equal_approx(xform):
+		return _err("Editor navigation replaced the camera transform; stop navigating and retry")
+	return _ok({"viewport_index": idx, "position": _serialize_value(camera.global_position), "rotation": _serialize_value(camera.global_rotation), "navigation_state_synchronized": false})
 
 
 func _set_auto_dismiss(params: Dictionary) -> Dictionary:
